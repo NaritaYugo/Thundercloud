@@ -1,0 +1,407 @@
+#pragma kernel CreateCloud
+#pragma kernel ClearTexture
+#pragma kernel ScrollCloud
+#pragma kernel SolvePoisson
+#pragma kernel EvokeBolt
+#pragma kernel UpdateBolt
+#pragma kernel CopyLight
+#pragma kernel PropagateFlash4
+#pragma kernel PropagateFlash1
+#pragma kernel DecrementAge
+
+uint3 _GridRes;
+uint _MaxBranches;
+float _EvokeBoltTH;
+float _BranchProbability;
+float _Absorption;
+float _ScrollSpeed;
+float _BranchScale;
+float dt;
+float t;
+
+const uint3x3 E = uint3x3(uint3(1,0,0), uint3(0,1,0), uint3(0,0,1));
+
+struct Tip {
+    float3 currPos;
+    float3 prevPos;
+    float age;
+    float padding;
+};
+
+RWTexture3D<float> _ScrollCloud;
+RWTexture3D<float> _Cloud;
+RWTexture3D<int> _FlashInt;
+RWTexture3D<float> _FlashRef;
+RWTexture3D<float> R_Flash1;
+RWTexture3D<float> W_Flash1;
+RWTexture3D<float> R_Flash4;
+RWTexture3D<float> W_Flash4;
+RWTexture3D<float> R_Potential;
+RWTexture3D<float> W_Potential;
+
+ConsumeStructuredBuffer<Tip> _CurrentTips;
+AppendStructuredBuffer<Tip> _NextTips;
+
+RWStructuredBuffer<Tip> _AllSegments;
+
+RWStructuredBuffer<uint> _SegmentCount;
+RWStructuredBuffer<int> _IsAliveTip;
+
+inline float hash11(float p) {
+    p = frac(p * .1031);
+    p *= p + 33.33;
+    p *= p + p;
+    return frac(p);
+}
+
+inline float3 hash31(float p) {
+    return frac(sin(p * float3(12.9898, 78.233, 37.719)) * 43758.5453);
+}
+
+inline float3 hash33(float3 p) {
+    p = frac(p * float3(443.897, 441.423, 437.195));
+    p += dot(p, p.yzx + 19.19);
+    return frac((p.xxy + p.yzz) * p.zyx);
+}
+
+inline float3 rotateAroundAxis(float3 v, float3 axis, float angle) {
+    float n = normalize(axis);
+    float s = sin(angle); float c = cos(angle);
+    return v * c + cross(n, v) * s + n * dot(n, v) * (1 - c);
+}
+
+inline float3 randomRotate(float3 v, float seed) {
+    float3 axis = hash31(seed) * 2.0 - 1.0;
+
+    float angle = hash11(seed + 10.0) * 6.28318530718;
+
+    return rotateAroundAxis(v, axis, angle);
+}
+
+inline float flatten(float3 id) {
+    return id.z * _GridRes.x * _GridRes.y + id.y * _GridRes.x + id.x;
+}
+
+inline float remap(float v, float low1, float high1, float low2, float high2) {
+    return low2 + (v - low1) * (high2 - low2) / (high1 - low1);
+}
+
+inline half voronoi (float3 uv, float angleOffset, float scale) {
+    float3 g = floor(uv * scale);
+    float3 f = frac(uv * scale);
+    float md = 8.0;
+
+    for (int z = -1; z <= 1; z++){
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                float3 lattice = float3(x, y, z);
+                
+                float3 cellIndex = g + lattice;
+                float3 tiledIndex = fmod(cellIndex + scale, scale); 
+                
+                float3 offset = hash33(tiledIndex);
+
+                offset = 0.5 + 0.5 * sin(angleOffset + 6.2831 * offset);
+                float3 r = lattice + offset - f;
+                float d = dot(r, r);
+
+                if (d < md) {
+                    md = d;
+                }
+            }
+        }
+    }
+    return sqrt(md);
+}
+
+inline half perlin (float3 uv, float offset, float scale){
+    float3 p = (uv + offset) * scale;
+    float3 g = floor(p);
+    float3 f = frac(p);
+
+    // 各格子点との内積
+    float d[8];
+    for (int z = 0; z <= 1; z++) {
+        for (int y = 0; y <= 1; y++) {
+            for (int x = 0; x <= 1; x++) {
+                float3 lattice = float3(x, y, z);
+
+                float3 tiledG = fmod(g + lattice, scale);
+                tiledG = fmod(tiledG + scale, scale);
+                float3 grad = hash33(tiledG)*2 - 1; // [0,1] to [-1, 1]
+
+                d[x + y*2 + z*4] = dot(grad, f - lattice);
+            }
+        }
+    }
+
+    // 補間係数
+    float3 s = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+
+    // 補間
+    float res = lerp(
+        lerp(lerp(d[0], d[1], s.x), lerp(d[2], d[3], s.x), s.y),
+        lerp(lerp(d[4], d[5], s.x), lerp(d[6], d[7], s.x), s.y),
+        s.z
+    );
+
+    return saturate(res * 0.5 + 0.5);
+}
+
+// ==========================================================
+[numthreads(8,8,8)]
+void CreateCloud (uint3 id : SV_DispatchThreadID) {
+    if (any(id >= _GridRes)) return;
+    float3 uv = id / float3(_GridRes);
+
+    float v1 = 1.0 - voronoi(uv, 1.0, 2.0);
+    float v2 = 1.0 - voronoi(uv, 1.2, 4.0);
+    float v3 = 1.0 - voronoi(uv, 1.5, 8.0);
+
+    float p = perlin(uv, 1.2, 4.0);
+
+    float w = v1 * 0.625 + v2 * 0.25 + v3 * 0.125;
+
+    float density = remap(p, 0.8 - w, 1.0, 0.0, 1.0);
+
+    _Cloud[id.xyz] = density;
+}
+
+[numthreads(8,8,8)]
+void ClearTexture (uint3 id : SV_DispatchThreadID) {
+    if (any(id >= _GridRes)) return;
+    _FlashInt[id] = 0;
+    _FlashRef[id] = 0;
+    W_Flash1[id] = 0;
+    W_Flash4[id/4] = 0;
+}
+
+[numthreads(8,8,8)]
+void ScrollCloud (uint3 id : SV_DispatchThreadID) {
+    if (any(id >= _GridRes)) return;
+    // スクロールした値を雷の計算に使う
+    // カクカクになるのを防ぐため、雲自体のスクロールはshaderで行う
+    _ScrollCloud[id] = _Cloud[(id + (uint3)t * _ScrollSpeed/_GridRes) % _GridRes];
+    W_Potential[id] = _Cloud[(id + (uint3)t * _ScrollSpeed/_GridRes) % _GridRes] * (2*id.y / _GridRes.y - 0.5);
+}
+
+[numthreads(8,8,8)]
+void SolvePoisson (uint3 id: SV_DispatchThreadID) { 
+    if (any(id >= _GridRes)) return;
+
+    if (id.y == 0) {
+        W_Potential[id] = -0.5;
+        return;
+    }
+    if (id.y == _GridRes.y - 1) {
+        W_Potential[id] = 0.5;
+        return;
+    }
+
+    uint3 offsets[6] = {uint3(1,0,0), uint3(0,1,0), uint3(0,0,1), 
+                        uint3(-1,0,0), uint3(0,-1,0), uint3(0,0,-1)};
+
+    float neighborSum = 0;
+    float validNeighbors = 0;
+    [unroll]
+    for (int i = 0; i < 6; i++) {
+        uint3 neighborId = id + offsets[i];
+        if (any(neighborId >= _GridRes)) continue; 
+        
+        neighborSum += R_Potential[neighborId];
+        validNeighbors += 1.0;
+    }
+
+    float charge = _ScrollCloud[id] * (2*(float)id.y / (float)_GridRes.y - 0.5) * 0.05;
+    W_Potential[id] = (neighborSum + charge) / max(1, validNeighbors);
+}
+
+[numthreads(1,1,1)]
+void EvokeBolt (uint3 id : SV_DispatchThreadID) {
+    if (_IsAliveTip[0] == 0) {
+        float3 startPos = _GridRes * hash33(t);
+        if ((R_Potential[floor(startPos)] + hash11(t)) * startPos.y / _GridRes.y < _EvokeBoltTH) return;
+
+        // 抽選されたセルの電位が閾値より大きいときに雷を発生
+        Tip tipStart;
+        tipStart.currPos = startPos;
+        tipStart.prevPos = startPos;
+        tipStart.age = 1.0;
+        tipStart.padding = 0;
+        
+        _NextTips.Append(tipStart);
+        _AllSegments[0] = tipStart;
+        _SegmentCount[0] = 1;
+    }
+}
+
+inline Tip ExtendTip(Tip baseTip, RWTexture3D<float> potential, int isBranch) {
+    float3 currPos = baseTip.currPos;
+    uint3 baseID = (uint3)floor(currPos);
+    float3 weight = frac(currPos);
+
+    float3 gradV = 0;
+
+    if (any(baseID >= 1) || any(baseID + 2 < _GridRes - 1)) {
+        for(int axis = 0; axis < 3; axis++) {
+            uint3 nextID = baseID + E[axis];
+
+            float VBaseL = potential[baseID - E[axis]];
+            float VBaseR = potential[baseID + E[axis]];
+            float VNextL = potential[nextID - E[axis]];
+            float VNextR = potential[nextID + E[axis]];
+            
+            gradV[axis] = lerp(VBaseR - VBaseL, VNextR - VNextL, weight[axis]);
+        }
+    }
+    else {
+        gradV = 2 * hash33(currPos + t) - 1;
+    }
+
+    if (isBranch == 1) gradV = randomRotate(gradV, t);
+
+    float randomRatio = 0.4;
+    gradV = lerp(gradV, 2 * hash33(currPos + t + 123.45) - 1, randomRatio);
+
+    gradV = normalize(gradV) * hash33(currPos + t + 67.89) * _BranchScale;
+    // 電位が低いほうに進む
+    float3 nextPos = currPos - gradV; 
+
+    Tip tipNext;
+    tipNext.currPos = nextPos;
+    tipNext.prevPos = currPos;
+    tipNext.age = 1.0;
+    tipNext.padding = 0;
+
+    return tipNext;
+}
+
+[numthreads(64,1,1)]
+void UpdateBolt (uint3 id : SV_DispatchThreadID) {
+    Tip tip = _CurrentTips.Consume();
+    if (tip.age <= 0) return;
+
+    Tip tipNext = ExtendTip(tip, R_Potential, 0);
+
+    // 停止判定
+    bool shouldStop = false;
+    if (length(tipNext.currPos - tipNext.prevPos) < 0.5) shouldStop = true;
+    if (any(tipNext.currPos < 0 ) || any(tipNext.currPos >= (float3)_GridRes - 1)) shouldStop = true;
+
+    if (!shouldStop) {
+        uint segmentIdx;
+        InterlockedAdd(_SegmentCount[0], 1, segmentIdx);
+
+        if (segmentIdx >= _MaxBranches) return;
+
+        _AllSegments[segmentIdx] = tipNext;
+
+        _NextTips.Append(tipNext);
+
+        uint3 tipNextID = floor(tipNext.currPos);
+        float3 weight = tipNext.currPos - (float3)tipNextID;
+
+        InterlockedAdd(_FlashInt[floor(tipNext.currPos)], 1);
+
+        // 確率で分岐
+        if (hash11(t + segmentIdx) < _BranchProbability) {
+            _NextTips.Append(ExtendTip(tip, R_Potential, 1));
+        }
+    }
+}
+
+[numthreads(8,8,8)]
+void CopyLight (uint3 id: SV_DispatchThreadID) { 
+    if (any(id >= _GridRes)) return;
+
+    // 明るめにしておいてshader側で調整
+    W_Flash1[id] = 100*(float)_FlashInt[id];
+    _FlashRef[id] = 100*(float)_FlashInt[id];
+
+    if (any(id >= _GridRes/4)) return;
+    float maxFlash = 0;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            for (int k = 0; k < 4; k++) {
+                maxFlash = max(maxFlash, (float)_FlashInt[id*4 + uint3(i, j, k)]);
+            }
+        }
+    }
+    W_Flash4[id] = 10*maxFlash;
+}
+
+[numthreads(8,8,8)]
+void PropagateFlash4 (uint3 id: SV_DispatchThreadID) { 
+    if (any(id >= _GridRes)) return;
+
+    float current = R_Flash4[id];
+    float density = _ScrollCloud[id];
+
+    uint3 offsets[6] = {uint3(1,0,0), uint3(0,1,0), uint3(0,0,1), 
+                        uint3(-1,0,0), uint3(0,-1,0), uint3(0,0,-1)};
+
+    float sum = current * (1.0 - density * 0.7);
+    float weightSum = 1.0 - density * 0.7;
+
+    [unroll]
+    for (int i = 0; i < 6; i++) 
+    {
+        uint3 n = id + offsets[i];
+        if (any(n >= _GridRes)) continue;
+        
+        float neighbor = R_Flash4[n];
+        float nDensity = _ScrollCloud[n];
+        
+        float transmission = exp(-_Absorption * (density + nDensity) * 0.5);
+        
+        sum += neighbor * transmission;
+        weightSum += transmission;
+    }
+
+    W_Flash4[id] = sum / max(0.001, weightSum);
+}
+
+[numthreads(8,8,8)]
+void PropagateFlash1 (uint3 id: SV_DispatchThreadID) { 
+    if (any(id >= _GridRes)) return;
+
+    float current = R_Flash1[id] + R_Flash4[id/4] * 4;
+    float density = _ScrollCloud[id];
+
+    uint3 offsets[6] = {uint3(1,0,0), uint3(0,1,0), uint3(0,0,1), 
+                        uint3(-1,0,0), uint3(0,-1,0), uint3(0,0,-1)};
+
+    float sum = current * (1.0 - density * 0.7);
+    float weightSum = 1.0 - density * 0.7;
+
+    [unroll]
+    for (int i = 0; i < 6; i++) 
+    {
+        uint3 n = id + offsets[i];
+        if (any(n >= _GridRes)) continue;
+        
+        float neighbor = R_Flash1[n];
+        float nDensity = _ScrollCloud[n];
+        
+        float transmission = exp(-_Absorption * (density + nDensity) * 0.5);
+        
+        sum += neighbor * transmission;
+        weightSum += transmission;
+    }
+
+    // 拡散するにつれて減衰させる
+    W_Flash1[id] = sum / max(0.001, weightSum) * _Absorption + _FlashRef[id];
+}
+
+[numthreads(64,1,1)]
+void DecrementAge (uint3 id : SV_DispatchThreadID) {
+    if (id.x >= _MaxBranches) return;
+
+    _AllSegments[id.x].age -= dt * 100;
+
+    if (_AllSegments[id.x].age > 0) {
+        InterlockedMax(_IsAliveTip[0], 1);
+    } else {
+        _AllSegments[id.x].age = 0;
+    }
+}
