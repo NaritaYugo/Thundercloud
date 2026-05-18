@@ -65,7 +65,7 @@ inline float3 hash33(float3 p) {
 }
 
 inline float3 rotateAroundAxis(float3 v, float3 axis, float angle) {
-    float n = normalize(axis);
+    float3 n = normalize(axis);
     float s = sin(angle); float c = cos(angle);
     return v * c + cross(n, v) * s + n * dot(n, v) * (1 - c);
 }
@@ -243,6 +243,7 @@ inline Tip ExtendTip(Tip baseTip, RWTexture3D<float> potential, int isBranch) {
     float3 gradV = 0;
 
     if (any(baseID >= 1) || any(baseID + 2 < _GridRes - 1)) {
+        [unroll]
         for(int axis = 0; axis < 3; axis++) {
             uint3 nextID = baseID + E[axis];
 
