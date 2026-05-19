@@ -1,5 +1,6 @@
 #pragma kernel CreateCloud
-#pragma kernel ClearTexture
+#pragma kernel ClearTextures
+#pragma kernel ClearBuffers
 #pragma kernel ScrollCloud
 #pragma kernel SolvePoisson
 #pragma kernel EvokeBolt
@@ -10,7 +11,6 @@
 
 uint3 _GridRes;
 uint _MaxBranches;
-int _BoltActiveFrames;
 float _EvokeProbability;
 float _BranchProbability;
 float _Absorption;
@@ -165,7 +165,7 @@ void CreateCloud (uint3 id : SV_DispatchThreadID) {
 }
 
 [numthreads(8,8,8)]
-void ClearTexture (uint3 id : SV_DispatchThreadID) {
+void ClearTextures (uint3 id : SV_DispatchThreadID) {
     if (any(id >= _GridRes)) return;
     
     _FlashInt[id] = 0;
@@ -175,8 +175,18 @@ void ClearTexture (uint3 id : SV_DispatchThreadID) {
 
     if (any(id >= _GridRes/4)) return;
     W_Flash4[id] = R_Flash4[id] * _FlashFadeFactor;
+}
+
+[numthreads(64,1,1)]
+void ClearBuffers (uint3 id : SV_DispatchThreadID) {
+    if (id.x >= _MaxBranches) return;
+
+    Tip tip;
+    tip.currPos = 0;
+    tip.prevPos = 0;
+    _AllSegments[id.x] = tip;
     
-    if (all(id == 0)) _IsAliveTip[0] = max(0, _IsAliveTip[0] - 1);
+    if (all(id == 0)) _IsAliveTip[0] = 0;
 }
 
 [numthreads(8,8,8)]
@@ -185,7 +195,8 @@ void ScrollCloud (uint3 id : SV_DispatchThreadID) {
     // スクロールした値を雷の計算に使う
     // カクカクになるのを防ぐため、雲自体のスクロールはshaderで行う
     _ScrollCloud[id] = _Cloud[(id + (uint3)t * _ScrollSpeed/_GridRes) % _GridRes];
-    W_Potential[id] = _Cloud[(id + (uint3)t * _ScrollSpeed/_GridRes) % _GridRes] * (2*id.y / _GridRes.y - 0.5);
+    // 雷が伸びるようにバイアスを掛ける
+    W_Potential[id] = _Cloud[(id + (uint3)t * _ScrollSpeed/_GridRes) % _GridRes] * 2*(id.y / _GridRes.y - 0.5);
 }
 
 [numthreads(8,8,8)]
@@ -215,8 +226,8 @@ void SolvePoisson (uint3 id: SV_DispatchThreadID) {
         validNeighbors += 1.0;
     }
 
-    float charge = _ScrollCloud[id] * (2*(float)id.y / (float)_GridRes.y - 0.5) * 0.05;
-    W_Potential[id] = (neighborSum + charge) / max(1, validNeighbors);
+    float charge = _ScrollCloud[id] * 2*((float)id.y / (float)_GridRes.y - 0.5);
+    W_Potential[id] = lerp(neighborSum, charge, 0.05) / max(1, validNeighbors);
 }
 
 [numthreads(1,1,1)]
@@ -243,7 +254,7 @@ void EvokeBolt (uint3 id : SV_DispatchThreadID) {
         _AllSegments[0] = tipStart;
         _SegmentCount[0] = 1;
         
-        _IsAliveTip[0] = _BoltActiveFrames; 
+        _IsAliveTip[0] = 1; 
     }
 }
 
@@ -255,7 +266,7 @@ inline Tip ExtendTip(Tip baseTip, RWTexture3D<float> potential, int isBranch) {
     float3 gradV = 0;
     
     uint3x3 E = uint3x3(1,0,0, 0,1,0, 0,0,1);
-    if (any(baseID >= 1) || any(baseID + 2 < _GridRes - 1)) {
+    if (all(baseID >= 1) || all(baseID + 2 < _GridRes - 1)) {
         [unroll]
         for(int axis = 0; axis < 3; axis++) {
             uint3 nextID = baseID + E[axis];
@@ -288,7 +299,8 @@ inline Tip ExtendTip(Tip baseTip, RWTexture3D<float> potential, int isBranch) {
     return tipNext;
 }
 
-[numthreads(64,1,1)]
+// [64,1,1]だと空のバッファをConsume()してしまう
+[numthreads(1,1,1)]
 void UpdateBolt (uint3 id : SV_DispatchThreadID) {
     if (_IsAliveTip[0] == 0) return;
 
@@ -338,8 +350,8 @@ void CopyLight (uint3 id: SV_DispatchThreadID) {
     if (any(id >= _GridRes)) return;
 
     // 明るめにしておいてshader側で調整
-    W_Flash1[id] += 100*(float)_FlashInt[id];
-    _FlashRef[id] = 100*(float)_FlashInt[id];
+    W_Flash1[id] += 10*(float)_FlashInt[id];
+    _FlashRef[id] = 10*(float)_FlashInt[id];
 
     if (any(id >= _GridRes/4)) return;
     float maxFlash = 0;
@@ -350,7 +362,7 @@ void CopyLight (uint3 id: SV_DispatchThreadID) {
             }
         }
     }
-    W_Flash4[id] += 10*maxFlash;
+    W_Flash4[id] += maxFlash;
 }
 
 [numthreads(8,8,8)]

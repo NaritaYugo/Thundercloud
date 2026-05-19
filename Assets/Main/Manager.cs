@@ -8,7 +8,7 @@ public class Manager : MonoBehaviour
     public class KernelSet
     {
         public int CreateCloud, ScrollCloud, UpdateBolt, SolvePoisson, EvokeBolt, 
-            ClearTexture, CopyLight, PropagateFlash1, PropagateFlash4;
+            ClearTextures, ClearBuffers, CopyLight, PropagateFlash1, PropagateFlash4;
         
         public void Initialize(ComputeShader cs)
         {
@@ -89,7 +89,6 @@ public class Manager : MonoBehaviour
     [SerializeField] private float m_Absorption = 0.8f;
     [SerializeField] private float m_BranchScale = 10f;
     [SerializeField] private float m_FlashFadeFactor = 0.3f;
-    [SerializeField] private int m_BoltActiveFrames = 1;
 
     private Material cloudMaterial;
 
@@ -176,23 +175,26 @@ public class Manager : MonoBehaviour
         compute.SetFloat("_ScrollSpeed", m_ScrollSpeed);
         compute.SetFloat("_FlashFadeFactor", m_FlashFadeFactor);
         compute.SetInt("_MaxBranches", m_MaxBranches);
-        compute.SetInt("_BoltActiveFrames", m_BoltActiveFrames);
 
         compute.SetTexture(kernels.ScrollCloud, "_Cloud", textures.cloud);
         compute.SetTexture(kernels.ScrollCloud, "_ScrollCloud", textures.scrollCloud);
         compute.SetTexture(kernels.ScrollCloud, "W_Potential", textures.potentialA);
         Dispatch(compute, kernels.ScrollCloud, m_GridRes);
 
-        compute.SetTexture(kernels.ClearTexture, "_FlashInt", textures.flashInt);
-        compute.SetTexture(kernels.ClearTexture, "R_Flash1", textures.flash1A);
-        compute.SetTexture(kernels.ClearTexture, "W_Flash1", textures.flash1B);
-        compute.SetTexture(kernels.ClearTexture, "R_Flash4", textures.flash4A);
-        compute.SetTexture(kernels.ClearTexture, "W_Flash4", textures.flash4B);
-        compute.SetTexture(kernels.ClearTexture, "_FlashRef", textures.flashRef);
-        compute.SetBuffer(kernels.ClearTexture, "_IsAliveTip", buffers.isAliveTip);
-        Dispatch(compute, kernels.ClearTexture, m_GridRes);
+        compute.SetTexture(kernels.ClearTextures, "_FlashInt", textures.flashInt);
+        compute.SetTexture(kernels.ClearTextures, "R_Flash1", textures.flash1A);
+        compute.SetTexture(kernels.ClearTextures, "W_Flash1", textures.flash1B);
+        compute.SetTexture(kernels.ClearTextures, "R_Flash4", textures.flash4A);
+        compute.SetTexture(kernels.ClearTextures, "W_Flash4", textures.flash4B);
+        compute.SetTexture(kernels.ClearTextures, "_FlashRef", textures.flashRef);
+        compute.SetBuffer(kernels.ClearTextures, "_IsAliveTip", buffers.isAliveTip);
+        Dispatch(compute, kernels.ClearTextures, m_GridRes);
         (textures.flash1A, textures.flash1B) = (textures.flash1B, textures.flash1A);
         (textures.flash4A, textures.flash4B) = (textures.flash4B, textures.flash4A);
+        
+        compute.SetBuffer(kernels.ClearBuffers, "_AllSegments", buffers.allSegments);
+        compute.SetBuffer(kernels.ClearBuffers, "_IsAliveTip", buffers.isAliveTip);
+        Dispatch(compute, kernels.ClearBuffers, new Vector3Int(m_MaxBranches, 1, 1));
 
         for (int i = 0; i < m_PoissonIter; i++) {
             compute.SetTexture(kernels.SolvePoisson, "R_Potential", textures.potentialA);

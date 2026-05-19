@@ -131,6 +131,7 @@ GameObject:
   - component: {fileID: 330585545}
   - component: {fileID: 330585544}
   - component: {fileID: 330585547}
+  - component: {fileID: 330585548}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -256,6 +257,26 @@ MonoBehaviour:
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
   m_Version: 2
+--- !u!114 &330585548
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 330585543}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6cbd1f971382c094d8ea972eb5dfad12, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::OrbitCamera
+  target: {fileID: 1552412408}
+  distance: 2
+  maxSpeedX: 30
+  maxSpeedY: 20
+  acceleration: 2
+  deceleration: 4
+  yMinLimit: -80
+  yMaxLimit: 80
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
@@ -328,7 +349,7 @@ Light:
   m_LightShadowCasterMode: 0
   m_AreaSize: {x: 1, y: 1}
   m_BounceIntensity: 1
-  m_ColorTemperature: 11975
+  m_ColorTemperature: 9761
   m_UseColorTemperature: 1
   m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 0}
   m_UseBoundingSphereOverride: 0
@@ -474,13 +495,12 @@ MonoBehaviour:
   m_PoissonIter: 20
   m_CoarseBlurIter: 30
   m_FineBlurIter: 30
-  m_EvokeProbability: 0.1
+  m_EvokeProbability: 0.48
   m_BranchProbability: 0.22
   m_ScrollSpeed: 0.1
   m_Absorption: 0.8
   m_BranchScale: 10
   m_FlashFadeFactor: 0.3
-  m_BoltActiveFrames: 1
 --- !u!65 &1552412405
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -568,7 +588,7 @@ Transform:
   m_GameObject: {fileID: 1552412403}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 5.79, z: 0}
+  m_LocalPosition: {x: 0, y: 10, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

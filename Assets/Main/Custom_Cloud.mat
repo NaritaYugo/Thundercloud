@@ -22,7 +22,15 @@ Material:
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
-    m_TexEnvs: []
+    m_TexEnvs:
+    - _FlashTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _MainTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
     - _Absorption: 0.3
@@ -33,7 +41,7 @@ Material:
     m_Colors:
     - _CloudBaseColor: {r: 1, g: 1, b: 1, a: 1}
     - _CloudShadowColor: {r: 0.29999998, g: 0.39999998, b: 0.6, a: 1}
-    - _FlashColor: {r: 0.5, g: 0.8, b: 1, a: 1}
+    - _FlashColor: {r: 0.5019608, g: 0.5087315, b: 1, a: 1}
     - _LightDir: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
