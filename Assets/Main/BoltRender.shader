@@ -3,7 +3,7 @@ Shader "Custom/BoltRender"
     Properties
     {
         [HDR] _Color("Tip Color", Color) = (0.5, 0.8, 1.0, 1)
-        _ShieldingRate ("Shielding Rate", Range(0.01, 1)) = 0.3
+        _ShieldingRate ("Shielding Rate", Range(0, 1)) = 0.5
         _StepSize ("Raymarch Step Size", Range(0.01, 0.1)) = 0.02
     }
     SubShader
@@ -78,10 +78,11 @@ Shader "Custom/BoltRender"
                     if (any(samplePos < 0.0) || any(samplePos > 1.0)) break;
                     
                     float density = SAMPLE_TEXTURE3D(_MainTex, sampler_MainTex, frac(samplePos + _Time.y * _ScrollSpeed)).r;
-                    accumDensity += density * _StepSize * _ShieldingRate;
+                    accumDensity += density * _StepSize;
                 }
+                float attenuation = exp(-accumDensity * _ShieldingRate);
 
-                return _Color * saturate(accumDensity / _ShieldingRate);
+                return half4(_Color.xyz, _Color.a * attenuation);
             }
             ENDHLSL
         }

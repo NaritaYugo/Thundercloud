@@ -25,9 +25,9 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _ShieldingRate: 0.162
+    - _ShieldingRate: 0.55
     - _StepSize: 0.02
     m_Colors:
-    - _Color: {r: 8, g: 12.8, b: 16, a: 1}
+    - _Color: {r: 0.9886793, g: 1.3699722, b: 4.0000005, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

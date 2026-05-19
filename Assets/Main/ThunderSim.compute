@@ -10,6 +10,7 @@
 
 uint3 _GridRes;
 uint _MaxBranches;
+int _BoltActiveFrames;
 float _EvokeProbability;
 float _BranchProbability;
 float _Absorption;
@@ -175,7 +176,7 @@ void ClearTexture (uint3 id : SV_DispatchThreadID) {
     if (any(id >= _GridRes/4)) return;
     W_Flash4[id] = R_Flash4[id] * _FlashFadeFactor;
     
-    if (all(id == 0)) _IsAliveTip[0] = 0;
+    if (all(id == 0)) _IsAliveTip[0] = max(0, _IsAliveTip[0] - 1);
 }
 
 [numthreads(8,8,8)]
@@ -242,7 +243,7 @@ void EvokeBolt (uint3 id : SV_DispatchThreadID) {
         _AllSegments[0] = tipStart;
         _SegmentCount[0] = 1;
         
-        _IsAliveTip[0] = 1; 
+        _IsAliveTip[0] = _BoltActiveFrames; 
     }
 }
 

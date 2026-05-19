@@ -84,11 +84,12 @@ public class Manager : MonoBehaviour
 
     [Header("Behavior")]
     [SerializeField] private float m_EvokeProbability = 0.1f;
-    [SerializeField] private float m_BranchProbability = 0.3f;
+    [SerializeField] private float m_BranchProbability = 0.2f;
     [SerializeField] private float m_ScrollSpeed = 0.1f;
     [SerializeField] private float m_Absorption = 0.8f;
     [SerializeField] private float m_BranchScale = 10f;
     [SerializeField] private float m_FlashFadeFactor = 0.3f;
+    [SerializeField] private int m_BoltActiveFrames = 1;
 
     private Material cloudMaterial;
 
@@ -175,6 +176,7 @@ public class Manager : MonoBehaviour
         compute.SetFloat("_ScrollSpeed", m_ScrollSpeed);
         compute.SetFloat("_FlashFadeFactor", m_FlashFadeFactor);
         compute.SetInt("_MaxBranches", m_MaxBranches);
+        compute.SetInt("_BoltActiveFrames", m_BoltActiveFrames);
 
         compute.SetTexture(kernels.ScrollCloud, "_Cloud", textures.cloud);
         compute.SetTexture(kernels.ScrollCloud, "_ScrollCloud", textures.scrollCloud);
