@@ -2,11 +2,12 @@ using UnityEngine;
 using System.Reflection;
 using UnityEngine.Rendering;
 
+[RequireComponent(typeof(Renderer))]
 public class Manager : MonoBehaviour
 {
     public class KernelSet
     {
-        public int CreateCloud, ScrollCloud, UpdateBolt, SolvePoisson, DecrementAge, EvokeBolt, 
+        public int CreateCloud, ScrollCloud, UpdateBolt, SolvePoisson, EvokeBolt, 
             ClearTexture, CopyLight, PropagateFlash1, PropagateFlash4;
         
         public void Initialize(ComputeShader cs)
@@ -43,11 +44,7 @@ public class Manager : MonoBehaviour
 
     public class BufferSet
     {
-        public ComputeBuffer allSegments;
-        public ComputeBuffer segmentCount;
-        public ComputeBuffer isAliveTip;
-        public ComputeBuffer tipA, tipB;
-        public ComputeBuffer args;
+        public ComputeBuffer allSegments, segmentCount, isAliveTip, tipA, tipB, args;
 
         public void ReleaseAll()
         {
@@ -67,8 +64,6 @@ public class Manager : MonoBehaviour
     {
         public Vector3 currPos;
         public Vector3 prevPos; // 折れ線でつなぐため
-        public float age;
-        public float padding;
     }
 
     [Header("Unity Settings")]
@@ -88,11 +83,12 @@ public class Manager : MonoBehaviour
     [SerializeField] private int m_FineBlurIter = 30;
 
     [Header("Behavior")]
-    [SerializeField] private float m_EvokeBoltTH = 0.1f;
+    [SerializeField] private float m_EvokeProbability = 0.1f;
     [SerializeField] private float m_BranchProbability = 0.3f;
     [SerializeField] private float m_ScrollSpeed = 0.1f;
     [SerializeField] private float m_Absorption = 0.8f;
     [SerializeField] private float m_BranchScale = 10f;
+    [SerializeField] private float m_FlashFadeFactor = 0.3f;
 
     private Material cloudMaterial;
 
@@ -117,12 +113,12 @@ public class Manager : MonoBehaviour
 
     void InitializeRenderTextures()
     {
-        static RenderTexture CreateRT(int resX, int resY, int resZ, RenderTextureFormat format)
+        static RenderTexture CreateRT(Vector3Int resolution, RenderTextureFormat format)
         {
-            RenderTexture rt = new(resX, resY, 0, format)
+            RenderTexture rt = new(resolution.x, resolution.y, 0, format)
             {
                 dimension = TextureDimension.Tex3D,
-                volumeDepth = resZ,
+                volumeDepth = resolution.z,
                 enableRandomWrite = true,
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp
@@ -131,21 +127,21 @@ public class Manager : MonoBehaviour
             return rt;
         }
 
-        textures.cloud = CreateRT(m_GridRes.x, m_GridRes.y, m_GridRes.z, RenderTextureFormat.RFloat);
-        textures.scrollCloud = CreateRT(m_GridRes.x, m_GridRes.y, m_GridRes.z, RenderTextureFormat.RFloat);
-        textures.flashRef = CreateRT(m_GridRes.x, m_GridRes.y, m_GridRes.z, RenderTextureFormat.RFloat);
-        textures.flash1A = CreateRT(m_GridRes.x, m_GridRes.y, m_GridRes.z, RenderTextureFormat.RFloat);
-        textures.flash1B = CreateRT(m_GridRes.x, m_GridRes.y, m_GridRes.z, RenderTextureFormat.RFloat);
-        textures.flash4A = CreateRT(m_GridRes.x/4, m_GridRes.y/4, m_GridRes.z/4, RenderTextureFormat.RFloat);
-        textures.flash4B = CreateRT(m_GridRes.x/4, m_GridRes.y/4, m_GridRes.z/4, RenderTextureFormat.RFloat);
-        textures.flashInt = CreateRT(m_GridRes.x, m_GridRes.y, m_GridRes.z, RenderTextureFormat.RInt);
-        textures.potentialA = CreateRT(m_GridRes.x, m_GridRes.y, m_GridRes.z, RenderTextureFormat.RFloat);
-        textures.potentialB = CreateRT(m_GridRes.x, m_GridRes.y, m_GridRes.z, RenderTextureFormat.RFloat);
+        textures.cloud = CreateRT(m_GridRes, RenderTextureFormat.RFloat);
+        textures.scrollCloud = CreateRT(m_GridRes, RenderTextureFormat.RFloat);
+        textures.flashRef = CreateRT(m_GridRes, RenderTextureFormat.RFloat);
+        textures.flash1A = CreateRT(m_GridRes, RenderTextureFormat.RFloat);
+        textures.flash1B = CreateRT(m_GridRes, RenderTextureFormat.RFloat);
+        textures.flash4A = CreateRT(m_GridRes/4, RenderTextureFormat.RFloat);
+        textures.flash4B = CreateRT(m_GridRes/4, RenderTextureFormat.RFloat);
+        textures.flashInt = CreateRT(m_GridRes, RenderTextureFormat.RInt);
+        textures.potentialA = CreateRT(m_GridRes, RenderTextureFormat.RFloat);
+        textures.potentialB = CreateRT(m_GridRes, RenderTextureFormat.RFloat);
     }
     
     void InitializeComputeBuffers()
     {
-        buffers.allSegments = new ComputeBuffer(m_MaxBranches, 32);
+        buffers.allSegments = new ComputeBuffer(m_MaxBranches, 24);
         
         buffers.segmentCount = new ComputeBuffer(1, sizeof(int));
         buffers.segmentCount.SetData(new int[] { 0 });
@@ -165,18 +161,19 @@ public class Manager : MonoBehaviour
         compute.SetInts("_GridRes", m_GridRes.x, m_GridRes.y, m_GridRes.z);
 
         compute.SetTexture(kernels.CreateCloud, "_Cloud", textures.cloud);
-        Dispatch(compute, kernels.CreateCloud, m_GridRes.x, m_GridRes.y, m_GridRes.z);
+        Dispatch(compute, kernels.CreateCloud, m_GridRes);
     }
 
     void Update()
     {
         compute.SetFloat("dt", m_dt);
         compute.SetFloat("t", Time.time);
-        compute.SetFloat("_EvokeBoltTH", m_EvokeBoltTH);
+        compute.SetFloat("_EvokeProbability", m_EvokeProbability);
         compute.SetFloat("_BranchProbability", m_BranchProbability);
         compute.SetFloat("_Absorption", m_Absorption);
         compute.SetFloat("_BranchScale", m_BranchScale);
         compute.SetFloat("_ScrollSpeed", m_ScrollSpeed);
+        compute.SetFloat("_FlashFadeFactor", m_FlashFadeFactor);
         compute.SetInt("_MaxBranches", m_MaxBranches);
 
         compute.SetTexture(kernels.ScrollCloud, "_Cloud", textures.cloud);
@@ -185,10 +182,15 @@ public class Manager : MonoBehaviour
         Dispatch(compute, kernels.ScrollCloud, m_GridRes);
 
         compute.SetTexture(kernels.ClearTexture, "_FlashInt", textures.flashInt);
-        compute.SetTexture(kernels.ClearTexture, "W_Flash1", textures.flash1A);
-        compute.SetTexture(kernels.ClearTexture, "W_Flash4", textures.flash4A);
+        compute.SetTexture(kernels.ClearTexture, "R_Flash1", textures.flash1A);
+        compute.SetTexture(kernels.ClearTexture, "W_Flash1", textures.flash1B);
+        compute.SetTexture(kernels.ClearTexture, "R_Flash4", textures.flash4A);
+        compute.SetTexture(kernels.ClearTexture, "W_Flash4", textures.flash4B);
         compute.SetTexture(kernels.ClearTexture, "_FlashRef", textures.flashRef);
+        compute.SetBuffer(kernels.ClearTexture, "_IsAliveTip", buffers.isAliveTip);
         Dispatch(compute, kernels.ClearTexture, m_GridRes);
+        (textures.flash1A, textures.flash1B) = (textures.flash1B, textures.flash1A);
+        (textures.flash4A, textures.flash4B) = (textures.flash4B, textures.flash4A);
 
         for (int i = 0; i < m_PoissonIter; i++) {
             compute.SetTexture(kernels.SolvePoisson, "R_Potential", textures.potentialA);
@@ -204,7 +206,7 @@ public class Manager : MonoBehaviour
         compute.SetBuffer(kernels.EvokeBolt, "_AllSegments", buffers.allSegments);
         compute.SetBuffer(kernels.EvokeBolt, "_SegmentCount", buffers.segmentCount);
         compute.SetBuffer(kernels.EvokeBolt, "_IsAliveTip", buffers.isAliveTip);
-        Dispatch(compute, kernels.EvokeBolt, 1, 1, 1);
+        Dispatch(compute, kernels.EvokeBolt, new Vector3Int(1, 1, 1));
         
         for (int s = 0; s < m_BoltExtendIter; s++) 
         {
@@ -218,6 +220,7 @@ public class Manager : MonoBehaviour
             compute.SetBuffer(kernels.UpdateBolt, "_NextTips", buffers.tipB);
             compute.SetBuffer(kernels.UpdateBolt, "_AllSegments", buffers.allSegments);
             compute.SetBuffer(kernels.UpdateBolt, "_SegmentCount", buffers.segmentCount);
+            compute.SetBuffer(kernels.UpdateBolt, "_IsAliveTip", buffers.isAliveTip);
             compute.DispatchIndirect(kernels.UpdateBolt, buffers.args);
 
             (buffers.tipA, buffers.tipB) = (buffers.tipB, buffers.tipA);
@@ -249,18 +252,6 @@ public class Manager : MonoBehaviour
             Dispatch(compute, kernels.PropagateFlash1, m_GridRes);
             (textures.flash1A, textures.flash1B) = (textures.flash1B, textures.flash1A);
         }
-
-        buffers.isAliveTip.SetData(new int[] { 0 });
-        compute.SetBuffer(kernels.DecrementAge, "_AllSegments", buffers.allSegments);
-        compute.SetBuffer(kernels.DecrementAge, "_SegmentCount", buffers.segmentCount);
-        compute.SetBuffer(kernels.DecrementAge, "_IsAliveTip", buffers.isAliveTip);
-        Dispatch(compute, kernels.DecrementAge, m_MaxBranches, 1, 1);
-    }
-
-    void Dispatch(ComputeShader _compute, int kernelID, int sizeX, int sizeY, int sizeZ)
-    {
-        _compute.GetKernelThreadGroupSizes(kernelID, out uint x, out uint y, out uint z);
-        _compute.Dispatch(kernelID, (int)((sizeX + x - 1)/x), (int)((sizeY + y - 1)/y), (int)((sizeZ + z - 1)/z));
     }
 
     void Dispatch(ComputeShader _compute, int kernelID, Vector3Int size)
@@ -269,6 +260,7 @@ public class Manager : MonoBehaviour
         _compute.Dispatch(kernelID, (int)((size.x + x - 1)/x), (int)((size.y + y - 1)/y), (int)((size.z + z - 1)/z));
     }
 
+    // BoltはDrawProceduralなので、URPの予約描画処理が必要
     void OnEnable()
     {
         RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
@@ -290,9 +282,11 @@ public class Manager : MonoBehaviour
         boltMaterial.SetVector("_Locate", transform.localPosition);
 
         boltMaterial.SetTexture("_MainTex", textures.cloud);
+        boltMaterial.SetBuffer("_IsAliveTip", buffers.isAliveTip);
 
+        // メッシュの描画ではないので、カメラ座標をC#から一括で渡したほうが高速
         Vector3 camPosOS = transform.InverseTransformPoint(camera.transform.position);
-        Vector3 camUV = new Vector3(
+        Vector3 camUV = new(
             camPosOS.x / transform.localScale.x + 0.5f,
             camPosOS.y / transform.localScale.y + 0.5f,
             camPosOS.z / transform.localScale.z + 0.5f

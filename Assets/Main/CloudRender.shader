@@ -2,6 +2,10 @@ Shader "Custom/CloudRender"
 {
     Properties
     {
+        // C#から届くが、propertyに無いとエラーメッセージが出ることがある
+        _MainTex ("Volume Texture", 3D) = "" {} 
+        _FlashTex ("Flash Texture", 3D) = "" {}
+
         _LightDir ("Light Direction", Vector) = (1,1,1)
         _StepSize ("Step Size", Range(0.001, 1)) = 0.01
         _AlphaThreshold ("Alpha Threshold", Range(0, 1)) = 0.1
@@ -115,6 +119,8 @@ Shader "Custom/CloudRender"
                         
                         float lightStepSize = _StepSize * 5.0; 
 
+                        // 各点から光源に向かってサブマーチ
+                        [loop]
                         for (int t = 0; t < 6; t++)
                         {
                             q += lightDir * lightStepSize;

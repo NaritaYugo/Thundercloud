@@ -7,25 +7,21 @@
 #pragma kernel CopyLight
 #pragma kernel PropagateFlash4
 #pragma kernel PropagateFlash1
-#pragma kernel DecrementAge
 
 uint3 _GridRes;
 uint _MaxBranches;
-float _EvokeBoltTH;
+float _EvokeProbability;
 float _BranchProbability;
 float _Absorption;
 float _ScrollSpeed;
 float _BranchScale;
+float _FlashFadeFactor;
 float dt;
 float t;
-
-const uint3x3 E = uint3x3(uint3(1,0,0), uint3(0,1,0), uint3(0,0,1));
 
 struct Tip {
     float3 currPos;
     float3 prevPos;
-    float age;
-    float padding;
 };
 
 RWTexture3D<float> _ScrollCloud;
@@ -170,10 +166,16 @@ void CreateCloud (uint3 id : SV_DispatchThreadID) {
 [numthreads(8,8,8)]
 void ClearTexture (uint3 id : SV_DispatchThreadID) {
     if (any(id >= _GridRes)) return;
+    
     _FlashInt[id] = 0;
     _FlashRef[id] = 0;
-    W_Flash1[id] = 0;
-    W_Flash4[id/4] = 0;
+
+    W_Flash1[id] = R_Flash1[id] * _FlashFadeFactor;
+
+    if (any(id >= _GridRes/4)) return;
+    W_Flash4[id] = R_Flash4[id] * _FlashFadeFactor;
+    
+    if (all(id == 0)) _IsAliveTip[0] = 0;
 }
 
 [numthreads(8,8,8)]
@@ -219,19 +221,28 @@ void SolvePoisson (uint3 id: SV_DispatchThreadID) {
 [numthreads(1,1,1)]
 void EvokeBolt (uint3 id : SV_DispatchThreadID) {
     if (_IsAliveTip[0] == 0) {
-        float3 startPos = _GridRes * hash33(t);
-        if ((R_Potential[floor(startPos)] + hash11(t)) * startPos.y / _GridRes.y < _EvokeBoltTH) return;
+        float3 startPos = _GridRes * hash33(t + 45.67);
+        uint3 gridCoord = floor(startPos);
+        if (any(gridCoord >= _GridRes)) return;
 
-        // 抽選されたセルの電位が閾値より大きいときに雷を発生
+        float potential = R_Potential[gridCoord]; 
+        float heightWeight = saturate(remap(potential, -0.5, 0.5, 0.0, 1.0));
+        // 上部の発生確率を上げる
+        heightWeight = pow(heightWeight, 2.0); 
+
+        float finalChance = _EvokeProbability * heightWeight;
+
+        if (hash11(t + 89.12) > finalChance) return;
+
         Tip tipStart;
         tipStart.currPos = startPos;
         tipStart.prevPos = startPos;
-        tipStart.age = 1.0;
-        tipStart.padding = 0;
         
         _NextTips.Append(tipStart);
         _AllSegments[0] = tipStart;
         _SegmentCount[0] = 1;
+        
+        _IsAliveTip[0] = 1; 
     }
 }
 
@@ -241,7 +252,8 @@ inline Tip ExtendTip(Tip baseTip, RWTexture3D<float> potential, int isBranch) {
     float3 weight = frac(currPos);
 
     float3 gradV = 0;
-
+    
+    uint3x3 E = uint3x3(1,0,0, 0,1,0, 0,0,1);
     if (any(baseID >= 1) || any(baseID + 2 < _GridRes - 1)) {
         [unroll]
         for(int axis = 0; axis < 3; axis++) {
@@ -271,16 +283,15 @@ inline Tip ExtendTip(Tip baseTip, RWTexture3D<float> potential, int isBranch) {
     Tip tipNext;
     tipNext.currPos = nextPos;
     tipNext.prevPos = currPos;
-    tipNext.age = 1.0;
-    tipNext.padding = 0;
 
     return tipNext;
 }
 
 [numthreads(64,1,1)]
 void UpdateBolt (uint3 id : SV_DispatchThreadID) {
+    if (_IsAliveTip[0] == 0) return;
+
     Tip tip = _CurrentTips.Consume();
-    if (tip.age <= 0) return;
 
     Tip tipNext = ExtendTip(tip, R_Potential, 0);
 
@@ -302,7 +313,17 @@ void UpdateBolt (uint3 id : SV_DispatchThreadID) {
         uint3 tipNextID = floor(tipNext.currPos);
         float3 weight = tipNext.currPos - (float3)tipNextID;
 
-        InterlockedAdd(_FlashInt[floor(tipNext.currPos)], 1);
+        // 前回の位置から今回の位置までの間を補間して光を登録
+        float3 p1 = tipNext.prevPos;
+        float3 p2 = tipNext.currPos;
+        float dist = length(p2 - p1);
+
+        int steps = max(1, (int)(dist * 3.0)); 
+
+        for (int i = 0; i <= steps; i++) {
+            float3 samplePos = lerp(p1, p2, (float)i / steps);
+            InterlockedAdd(_FlashInt[floor(samplePos)], 1);
+        }
 
         // 確率で分岐
         if (hash11(t + segmentIdx) < _BranchProbability) {
@@ -316,7 +337,7 @@ void CopyLight (uint3 id: SV_DispatchThreadID) {
     if (any(id >= _GridRes)) return;
 
     // 明るめにしておいてshader側で調整
-    W_Flash1[id] = 100*(float)_FlashInt[id];
+    W_Flash1[id] += 100*(float)_FlashInt[id];
     _FlashRef[id] = 100*(float)_FlashInt[id];
 
     if (any(id >= _GridRes/4)) return;
@@ -328,7 +349,7 @@ void CopyLight (uint3 id: SV_DispatchThreadID) {
             }
         }
     }
-    W_Flash4[id] = 10*maxFlash;
+    W_Flash4[id] += 10*maxFlash;
 }
 
 [numthreads(8,8,8)]
@@ -345,8 +366,7 @@ void PropagateFlash4 (uint3 id: SV_DispatchThreadID) {
     float weightSum = 1.0 - density * 0.7;
 
     [unroll]
-    for (int i = 0; i < 6; i++) 
-    {
+    for (int i = 0; i < 6; i++) {
         uint3 n = id + offsets[i];
         if (any(n >= _GridRes)) continue;
         
@@ -392,17 +412,4 @@ void PropagateFlash1 (uint3 id: SV_DispatchThreadID) {
 
     // 拡散するにつれて減衰させる
     W_Flash1[id] = sum / max(0.001, weightSum) * _Absorption + _FlashRef[id];
-}
-
-[numthreads(64,1,1)]
-void DecrementAge (uint3 id : SV_DispatchThreadID) {
-    if (id.x >= _MaxBranches) return;
-
-    _AllSegments[id.x].age -= dt * 100;
-
-    if (_AllSegments[id.x].age > 0) {
-        InterlockedMax(_IsAliveTip[0], 1);
-    } else {
-        _AllSegments[id.x].age = 0;
-    }
 }

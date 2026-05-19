@@ -26,11 +26,10 @@ Shader "Custom/BoltRender"
             struct Tip {
                 float3 currPos;
                 float3 prevPos;
-                float age;
-                float padding;
             };
 
             StructuredBuffer<Tip> _BoltBuffer;
+            StructuredBuffer<int> _IsAliveTip;
             float4 _Color;
             float3 _GridRes;
             float3 _BoundsSize;
@@ -45,8 +44,7 @@ Shader "Custom/BoltRender"
 
             struct Varyings {
                 float4 positionCS : SV_POSITION;
-                float age : TEXCOORD0;
-                float3 uv : TEXCOORD1;
+                float3 uv : TEXCOORD0;
             };
 
             Varyings vert(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID) {
@@ -61,12 +59,11 @@ Shader "Custom/BoltRender"
                 float3 localPos = (pos / _GridRes - 0.5) * _BoundsSize + _Locate;
                 
                 OUT.positionCS = TransformObjectToHClip(localPos);
-                OUT.age = tip.age;
                 return OUT;
             }
 
             half4 frag(Varyings IN) : SV_Target {
-                clip(IN.age - 0.001);
+                if (_IsAliveTip[0] == 0) discard;
 
                 float3 rayDir = _CameraUV - IN.uv;
                 float dist = length(rayDir);
@@ -84,7 +81,7 @@ Shader "Custom/BoltRender"
                     accumDensity += density * _StepSize * _ShieldingRate;
                 }
 
-                return _Color * saturate(accumDensity / _ShieldingRate) * lerp(0.5, 1.0, IN.age);
+                return _Color * saturate(accumDensity / _ShieldingRate);
             }
             ENDHLSL
         }
