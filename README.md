@@ -6,7 +6,7 @@ GPUによる雲の描画と、雲内放電のシミュレーションです。
 
 [![Demo](https://github.com/user-attachments/assets/c757b606-7022-4cc0-b23a-e06d2b983620)](https://youtu.be/xiqlfRx6dBA)
 
-[Windows Demo ダウンロード](作成中)
+[Windows Demo ダウンロード](https://github.com/NaritaYugo/Thundercloud/releases/tag/v1.0.0)
 
 ※ Unityでビルドした未署名の実行ファイルのため、
 Windows Defender の警告が表示される場合があります。
